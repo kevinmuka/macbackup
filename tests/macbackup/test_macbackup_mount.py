@@ -1,0 +1,392 @@
+"""Read-only mount layout, conflict checks and mountpoint cleanup."""
+
+import argparse
+import io
+import os
+from pathlib import Path
+import pty
+import select
+import shutil
+import subprocess
+import tempfile
+import termios
+import unittest
+from contextlib import redirect_stdout
+from unittest.mock import Mock, patch
+
+from lib.macbackup import inventory, policy, scan, state, transport, ui
+from lib.macbackup.commands import mount
+
+
+SCRIPT = Path(__file__).resolve().parents[2] / "bin/macbackup"
+
+
+class MountTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name).resolve()
+        self.home = self.base / 'home'
+        self.home.mkdir()
+        self.config = self.home / '.config/macbackup'
+        policy.init_config(self.config, self.home)
+        (self.home / 'Desktop').mkdir()
+
+    def test_mount_discards_typed_input_and_restores_terminal(self):
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, slave)
+        self.addCleanup(os.close, master)
+        original = termios.tcgetattr(slave)
+        with os.fdopen(os.dup(slave), 'rb', buffering=0) as stream, \
+             patch('sys.stdin', stream):
+            with ui.discard_mount_input() as fd:
+                active = termios.tcgetattr(fd)
+                self.assertFalse(active[3] & termios.ECHO)
+                self.assertFalse(active[3] & termios.ICANON)
+                self.assertTrue(active[3] & termios.ISIG)
+                self.assertEqual(active[6][termios.VINTR], original[6][termios.VINTR])
+                os.write(master, b'unwanted command\n')
+                self.assertTrue(select.select([fd], [], [], 1)[0])
+                self.assertEqual(os.read(fd, 4096), b'unwanted command\n')
+        self.assertEqual(termios.tcgetattr(slave), original)
+
+    def test_mount_guards_input_during_inventory_and_startup(self):
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, slave)
+        self.addCleanup(os.close, master)
+        original = termios.tcgetattr(slave)
+        process = Mock()
+        process.poll.return_value = None
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain',
+                               'private': 'localcrypt:'}}, 25)
+        stages = []
+
+        def inventory(_roots, _name, input_fd):
+            stages.append('inventory')
+            self.assertFalse(termios.tcgetattr(input_fd)[3] & termios.ECHO)
+            with self.assertRaises(policy.ConfigError):
+                with state.operation_lock(self.home / '.local/state/macbackup'):
+                    pass
+            os.write(master, b'ignored')
+            ui.mount_input_wait(input_fd, 0.1)
+            self.assertFalse(select.select([input_fd], [], [], 0)[0])
+
+        def startup(input_fd, _timeout):
+            stages.append('startup')
+            self.assertFalse(termios.tcgetattr(input_fd)[3] & termios.ECHO)
+            raise KeyboardInterrupt
+
+        args = argparse.Namespace(target='google', area='all', mountpoint=None)
+        with os.fdopen(os.dup(slave), 'rb', buffering=0) as stream, \
+             patch('sys.stdin', stream), redirect_stdout(io.StringIO()), \
+             patch('subprocess.Popen', return_value=process), \
+             patch('os.path.ismount', return_value=False), \
+             patch.dict(vars(mount),
+                        {'load_targets': lambda *_args: targets,
+                         'mount_current_conflicts': inventory,
+                         'mount_input_wait': startup}):
+            self.assertEqual(mount.mount_operation(args, self.config, self.home), 0)
+        self.assertEqual(stages, ['inventory', 'startup'])
+        self.assertEqual(termios.tcgetattr(slave), original)
+        process.terminate.assert_called_once()
+
+    def test_mount_progress_shows_indeterminate_ascii_bar_and_elapsed_time(self):
+        class Terminal(io.StringIO):
+            def isatty(self):
+                return True
+
+        terminal = Terminal()
+        with patch('sys.stderr', terminal), \
+             patch.dict(os.environ, {'TERM': 'xterm-256color', 'NO_COLOR': '',
+                                     'PYTHON_COLORS': '1'}):
+            pulse = ui.MountPulse('Inventory google/plain')
+            pulse.draw(1048576)
+            pulse.done('12 entries read')
+        output = terminal.getvalue()
+        self.assertRegex(output, r'\[[#.]{22}\]')
+        self.assertIn('\x1b[1;36m', output)
+        self.assertIn('metadata 1.0 MiB', output)
+        self.assertIn('12 entries read', output)
+        self.assertRegex(output, r'\(\d+s\)')
+
+    def test_mount_progress_respects_no_color_and_redirected_output(self):
+        class Terminal(io.StringIO):
+            def isatty(self):
+                return True
+
+        terminal = Terminal()
+        with patch('sys.stderr', terminal), \
+             patch.dict(os.environ, {'NO_COLOR': '1', 'PYTHON_COLORS': ''}):
+            pulse = ui.MountPulse('Starting google/all')
+            pulse.draw()
+            pulse.done('complete')
+        self.assertNotIn('\x1b[1;36m', terminal.getvalue())
+        self.assertNotIn('\x1b[32m', terminal.getvalue())
+        redirected = io.StringIO()
+        with patch('sys.stderr', redirected):
+            pulse = ui.MountPulse('Starting google/all')
+            pulse.done('complete')
+        self.assertNotIn('\x1b[', redirected.getvalue())
+
+    @unittest.skipUnless(shutil.which('rclone'), 'rclone is needed for inventory checks')
+    def test_interrupting_inventory_stops_rclone(self):
+        process = Mock()
+        process.poll.return_value = None
+        with patch('subprocess.Popen', return_value=process), \
+             patch('time.sleep', side_effect=KeyboardInterrupt):
+            with self.assertRaisesRegex(policy.ConfigError, 'interrupted'):
+                inventory.mount_inventory('synthetic:', 'google/plain')
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once()
+
+    def test_mount_uses_configured_plain_remote_read_only_and_stops_on_interrupt(self):
+        mounted = False
+        process = Mock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        def stop():
+            nonlocal mounted
+            mounted = False
+        process.terminate.side_effect = stop
+        def start(command, **_kwargs):
+            nonlocal mounted
+            mounted = True
+            self.assertEqual(command[:4], ['/synthetic/bin/rclone', '--ask-password=false',
+                                           'nfsmount', 'localplain:MacBackup/plain'])
+            self.assertIn('--read-only', command)
+            self.assertEqual(command[command.index('--addr') + 1], '127.0.0.1:0')
+            return process
+        args = argparse.Namespace(target='google', area='plain', mountpoint=None)
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain', 'private': 'localcrypt:'}}, 25)
+        output = io.StringIO()
+        def mounted_wait(_input_fd, _timeout):
+            # A mounted volume must not hold the operation lock indefinitely.
+            with state.operation_lock(self.home / '.local/state/macbackup'):
+                pass
+            raise KeyboardInterrupt
+        with redirect_stdout(output), patch('shutil.which', return_value='/synthetic/bin/rclone'), \
+             patch('subprocess.Popen', side_effect=start), \
+             patch('os.path.ismount', side_effect=lambda _path: mounted), \
+             patch.dict(vars(mount),
+                        {'load_targets': lambda *_args: targets,
+                         'mount_input_wait': mounted_wait}):
+            result = mount.mount_operation(args, self.config, self.home)
+        self.assertEqual(result, 0)
+        process.terminate.assert_called_once()
+        point = self.home / 'Desktop/google-plain'
+        self.assertIn(f'Volume unmounted: {point}', output.getvalue())
+        self.assertFalse(point.exists())
+        decision = policy.Policy(self.config, self.home).decide(point / 'current/file.txt')
+        self.assertEqual(decision.action, 'skip')
+        self.assertEqual(decision.rule, str(point))
+
+    def test_mount_fails_before_loading_targets_when_another_operation_is_active(self):
+        args = argparse.Namespace(target='google', area='all', mountpoint=None)
+        state_dir = self.home / '.local/state/macbackup'
+        with state.operation_lock(state_dir), \
+             patch('shutil.which', return_value='/synthetic/bin/rclone'), \
+             patch.dict(vars(mount),
+                        {'load_targets': Mock(side_effect=AssertionError('loaded targets'))}):
+            with self.assertRaises(policy.ConfigError):
+                mount.mount_operation(args, self.config, self.home)
+
+    def test_mount_reports_missing_rclone_before_creating_mountpoint(self):
+        args = argparse.Namespace(target='google', area='plain', mountpoint=None)
+        with patch('shutil.which', return_value=None):
+            with self.assertRaisesRegex(policy.ConfigError, 'rclone'):
+                mount.mount_operation(args, self.config, self.home)
+        self.assertFalse((self.home / 'Desktop/google-plain').exists())
+
+    def test_mount_keeps_preexisting_empty_mountpoint(self):
+        point = self.home / 'Desktop/google-plain'
+        point.mkdir(parents=True)
+        mounted = False
+        process = Mock()
+        process.poll.return_value = None
+        def start(*_args, **_kwargs):
+            nonlocal mounted
+            mounted = True
+            return process
+        def stop():
+            nonlocal mounted
+            mounted = False
+        process.terminate.side_effect = stop
+        args = argparse.Namespace(target='google', area='plain', mountpoint=None)
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain', 'private': 'localcrypt:'}}, 25)
+        with patch('subprocess.Popen', side_effect=start), \
+             patch('os.path.ismount', side_effect=lambda _path: mounted), \
+             patch('time.sleep', side_effect=KeyboardInterrupt), \
+             patch.dict(vars(mount), {'load_targets': lambda *_args: targets}):
+            self.assertEqual(mount.mount_operation(args, self.config, self.home), 0)
+        self.assertTrue(point.is_dir())
+
+    def test_external_eject_is_a_clean_shutdown(self):
+        mounted = False
+        process = Mock()
+        def start(*_args, **_kwargs):
+            nonlocal mounted
+            mounted = True
+            return process
+        def poll():
+            nonlocal mounted
+            mounted = False
+            return 0
+        process.poll.side_effect = poll
+        args = argparse.Namespace(target='google', area='plain', mountpoint=None)
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain', 'private': 'localcrypt:'}}, 25)
+        with patch('subprocess.Popen', side_effect=start), \
+             patch('os.path.ismount', side_effect=lambda _path: mounted), \
+             patch.dict(vars(mount), {'load_targets': lambda *_args: targets}):
+            self.assertEqual(mount.mount_operation(args, self.config, self.home), 0)
+        process.terminate.assert_not_called()
+        self.assertFalse((self.home / 'Desktop/google-plain').exists())
+
+    def test_eject_during_mount_startup_is_clean_when_rclone_logged_unmount(self):
+        process = Mock()
+        process.poll.return_value = 0
+        def start(*_args, **kwargs):
+            kwargs['stdout'].write('NOTICE: Unmounted rclone mount\n')
+            kwargs['stdout'].flush()
+            return process
+        args = argparse.Namespace(target='google', area='plain', mountpoint=None)
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain', 'private': 'localcrypt:'}}, 25)
+        with patch('subprocess.Popen', side_effect=start), \
+             patch('os.path.ismount', return_value=False), \
+             patch.dict(vars(mount), {'load_targets': lambda *_args: targets}):
+            self.assertEqual(mount.mount_operation(args, self.config, self.home), 0)
+        self.assertFalse((self.home / 'Desktop/google-plain').exists())
+
+    def test_unexpected_mount_exit_remains_an_error(self):
+        mounted = False
+        process = Mock()
+        def start(*_args, **_kwargs):
+            nonlocal mounted
+            mounted = True
+            return process
+        def poll():
+            nonlocal mounted
+            mounted = False
+            return 1
+        process.poll.side_effect = poll
+        args = argparse.Namespace(target='google', area='plain', mountpoint=None)
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain', 'private': 'localcrypt:'}}, 25)
+        with patch('subprocess.Popen', side_effect=start), \
+             patch('os.path.ismount', side_effect=lambda _path: mounted), \
+             patch.dict(vars(mount), {'load_targets': lambda *_args: targets}):
+            with self.assertRaisesRegex(transport.TransportError, 'code 1'):
+                mount.mount_operation(args, self.config, self.home)
+        self.assertFalse((self.home / 'Desktop/google-plain').exists())
+
+    def test_mount_all_combines_plain_and_private_in_one_protected_volume(self):
+        mounted = False
+        process = Mock()
+        process.poll.return_value = None
+        def start(command, **kwargs):
+            nonlocal mounted
+            mounted = True
+            self.assertEqual(command[:3], ['/synthetic/bin/rclone',
+                                           '--ask-password=false', 'nfsmount'])
+            self.assertTrue(command[3].startswith('macbackup_mount_'))
+            self.assertEqual(command[4], str(self.home / 'Desktop/google'))
+            self.assertIn('--read-only', command)
+            env = kwargs['env']
+            self.assertIn('union', env.values())
+            self.assertIn('current=', ' '.join(env.values()))
+            self.assertIn('history=', ' '.join(env.values()))
+            return process
+        def stop():
+            nonlocal mounted
+            mounted = False
+        process.terminate.side_effect = stop
+        args = argparse.Namespace(target='google', area='all', mountpoint=None)
+        targets = ({'google': {'plain': 'localplain:MacBackup/plain', 'private': 'localcrypt:'}}, 25)
+        with patch('shutil.which', return_value='/synthetic/bin/rclone'), \
+             patch('subprocess.Popen', side_effect=start), \
+             patch('os.path.ismount', side_effect=lambda _path: mounted), \
+             patch('time.sleep', side_effect=KeyboardInterrupt), \
+             patch.dict(vars(mount),
+                        {'load_targets': lambda *_args: targets,
+                         'mount_current_conflicts': lambda *_args: None}):
+            self.assertEqual(mount.mount_operation(args, self.config, self.home), 0)
+        point = self.home / 'Desktop/google'
+        self.assertFalse(point.exists())
+        self.assertEqual(policy.Policy(self.config, self.home).decide(point / 'private/current/file').action,
+                         'skip')
+
+    def test_desktop_mounts_are_never_selected_for_backup(self):
+        points = (self.home / 'Desktop/google', self.home / 'Desktop/google-plain')
+        for point in points:
+            (point / 'current').mkdir(parents=True)
+            (point / 'current/file.txt').write_text('cloud file')
+        (self.config / 'plain-paths.txt').write_text(
+            str(self.home / 'Desktop') + '/\n' + ''.join(str(point) + '/\n' for point in points))
+        selection = policy.Policy(self.config, self.home)
+        result = scan.scan_policy(selection)
+        self.assertFalse(result.errors, result.errors)
+        for point in points:
+            self.assertNotIn(str(point / 'current/file.txt'), [entry.path for entry in result.entries])
+            self.assertEqual(selection.decide(point / 'current/file.txt').action, 'skip')
+
+    @unittest.skipUnless(shutil.which('rclone'), 'rclone is needed for inventory checks')
+    def test_merged_mount_refuses_same_current_file_in_plain_and_private(self):
+        roots = {'plain': str(self.base / 'plain'), 'private': str(self.base / 'private')}
+        for root in roots.values():
+            folder = Path(root) / 'current/Users/test/project'
+            folder.mkdir(parents=True)
+            (folder / 'shared.txt').write_text('synthetic')
+        point = self.home / 'Desktop/google'
+        point.mkdir()
+        (point / 'keep.txt').write_text('unrelated')
+        args = argparse.Namespace(target='google', area='all', mountpoint=None)
+        targets = ({'google': roots}, 25)
+        with patch.dict(vars(mount),
+                        {'load_targets': lambda *_args: targets}):
+            with self.assertRaisesRegex(policy.ConfigError, 'Users/test/project/shared.txt'):
+                mount.mount_operation(args, self.config, self.home)
+        self.assertEqual((point / 'keep.txt').read_text(), 'unrelated')
+
+    @unittest.skipUnless(shutil.which('rclone'), 'rclone is needed for inventory checks')
+    def test_merged_mount_refuses_file_directory_collision(self):
+        plain = self.base / 'plain/current/Users/test'
+        private = self.base / 'private/current/Users/test'
+        plain.mkdir(parents=True)
+        (private / 'item').mkdir(parents=True)
+        (plain / 'item').write_text('file')
+        (private / 'item/child').write_text('child')
+        with self.assertRaisesRegex(policy.ConfigError, 'Users/test/item'):
+            inventory.mount_current_conflicts({
+                'plain': str(self.base / 'plain'),
+                'private': str(self.base / 'private'),
+            })
+
+    def test_merged_mount_refuses_duplicate_path_within_one_area(self):
+        entries = {
+            'plain': [
+                {'Path': 'Users/test/item', 'IsDir': False},
+                {'Path': 'Users/test/item', 'IsDir': False},
+            ],
+            'private': [],
+        }
+
+        def fake_inventory(_root, label, *_args, **_kwargs):
+            return entries[label.rsplit('/', 1)[-1]]
+
+        with patch.object(inventory, 'mount_inventory', fake_inventory):
+            with self.assertRaisesRegex(transport.TransportError, 'duplicat'):
+                inventory.mount_current_conflicts({'plain': 'plain:', 'private': 'private:'}, 'google')
+
+    def test_merged_mount_refuses_missing_object_type(self):
+        def fake_inventory(_root, label, *_args, **_kwargs):
+            return [{'Path': 'Users/test/item'}] if label.endswith('/plain') else []
+
+        with patch.object(inventory, 'mount_inventory', fake_inventory):
+            with self.assertRaisesRegex(transport.TransportError, 'type'):
+                inventory.mount_current_conflicts({'plain': 'plain:', 'private': 'private:'}, 'google')
+
+    def test_merged_mount_refuses_control_character_in_current_path(self):
+        def fake_inventory(_root, label, *_args, **_kwargs):
+            return [{'Path': 'Users/test/bad\nname', 'IsDir': False}] if label.endswith('/plain') else []
+
+        with patch.object(inventory, 'mount_inventory', fake_inventory):
+            with self.assertRaisesRegex(transport.TransportError, 'invalid path'):
+                inventory.mount_current_conflicts({'plain': 'plain:', 'private': 'private:'}, 'google')

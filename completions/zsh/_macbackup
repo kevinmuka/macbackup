@@ -1,0 +1,166 @@
+#compdef macbackup
+
+# This completion is deliberately offline: never invoke macbackup or rclone.
+local curcontext="$curcontext" context state state_descr line
+local -A opt_args
+local -a commands
+
+commands=(
+  'init:create empty configuration'
+  'check:check sources and rules'
+  'explain:explain a path rule'
+  'layout:show private subtrees'
+  'preview:preview the backup'
+  'run:run the backup'
+  'mount:mount backup read-only'
+  "status:show the latest run or verification"
+  'restore-icon:restore a Finder icon'
+  'forget:remove copies with a checked plan'
+  'versions:list current and history versions'
+  'restore:restore a file or symlink'
+  'verify:compare local and cloud'
+)
+
+_macbackup_absolute_path() {
+  if [[ -z "$PREFIX" ]]; then
+    compadd -S '' -- /
+  elif [[ "$PREFIX" == /* || "$PREFIX" == \~* ]]; then
+    _path_files "$@"
+  fi
+}
+
+# A single compact group avoids the separate aliases/descriptions emitted by
+# _arguments when the first word is only a dash.
+if (( CURRENT == 2 )) && [[ "$PREFIX" == -* && "$PREFIX" != *=* ]]; then
+  local -a global_options
+  global_options=(
+    '--config-dir:alternate lists and settings'
+    '--help:command help'
+    '--version:installed version'
+    '-h:command help'
+  )
+  _describe -t options 'global options' global_options
+  return
+fi
+
+_arguments -C -A '-*' \
+  '(- *)'{-h,--help}'[command help]' \
+  '(- *)--version[installed version]' \
+  '--config-dir=[alternate lists and settings]:absolute directory:_macbackup_absolute_path -/' \
+  '1:command:->command' \
+  '*::argument:->arguments'
+
+case "$state" in
+  command)
+    _describe -t commands 'macbackup command' commands
+    ;;
+  arguments)
+    case "$line[1]" in
+      init)
+        _arguments '(- *)'{-h,--help}'[show help]'
+        ;;
+      check)
+        local -a check_options
+        check_options=(
+          '--json[JSON output]'
+          '--remote[check cloud read-only]'
+        )
+        if (( ${words[(Ie)--remote]} )); then
+          check_options+=('--target=[service, default google]:service:(google proton all)')
+        fi
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          "${check_options[@]}"
+        ;;
+      explain)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--json[JSON output]' \
+          '1:absolute path to classify:_macbackup_absolute_path'
+        ;;
+      layout)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--json[JSON output]' \
+          '1::plain folder (default\: current directory):_macbackup_absolute_path -/'
+        ;;
+      preview)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '(--target)--local[local selection only]' \
+          "(--local)--target=[read-only cloud archive plan]:service:(google proton all)" \
+          '(--local)--simulate[also compare private contents and simulate transfers]' \
+          '--json[JSON output]'
+        ;;
+      run)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--target=[backup service]:service:(google proton all)' \
+          '--progress-depth=[display depth, default 2]:levels:(1 2 3 4 5)' \
+          '--json[final JSON summary]'
+        ;;
+      mount)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--target=[service to mount]:service:(google proton all)' \
+          '--area=[area, default all]:area:(plain private all)' \
+          '--mountpoint=[base folder, default Desktop]:absolute directory:_macbackup_absolute_path -/'
+        ;;
+      status)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--json[status already prints JSON]' \
+          '--verify[show the latest verification report]'
+        ;;
+      restore-icon)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--file=[local icon.json snapshot]:absolute file:_macbackup_absolute_path' \
+          "--folder=[icon destination folder]:absolute folder:_macbackup_absolute_path -/" \
+          "--replace[replace an existing icon]" \
+          '--json[JSON output]'
+        ;;
+      forget)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--area=[area to clean]:area:(plain private all)' \
+          '--target=[service to clean]:service:(google proton all)' \
+          '--mode=[trash or permanent]:mode:(trash permanent)' \
+          '--plan=[plan ID]:ID:' \
+          '--apply[apply the checked plan]' \
+          '--json[JSON output]' \
+          '1:original path, trailing slash for directory:_macbackup_absolute_path'
+        ;;
+      versions)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--target=[service to search]:service:(google proton all)' \
+          '--area=[area, default all]:area:(plain private all)' \
+          '--files[history files only]' \
+          '--json[JSON output]' \
+          '1:original file or directory path:_macbackup_absolute_path'
+        ;;
+      restore)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--target=[source service]:service:(google proton)' \
+          '--area=[source area]:area:(plain private)' \
+          '--version=[current or history ID]:version:' \
+          '--to=[absolute local path]:absolute file:_macbackup_absolute_path' \
+          '--replace[replace existing file]' \
+          '--links[recreate symlink]' \
+          '--json[JSON output]' \
+          '1:original path:_macbackup_absolute_path'
+        ;;
+      verify)
+        _arguments \
+          '(- *)'{-h,--help}'[show help]' \
+          '--target=[service to compare]:service:(google proton all)' \
+          '--area=[area, default all]:area:(plain private all)' \
+          '--download[also verify contents]' \
+          '--size-only[compare paths and sizes only]' \
+          '--json[JSON output]'
+        ;;
+    esac
+    ;;
+esac
