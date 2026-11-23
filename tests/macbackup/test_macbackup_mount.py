@@ -14,8 +14,8 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import Mock, patch
 
-from lib.macbackup import inventory, policy, scan, state, transport, ui
-from lib.macbackup.commands import mount
+from app import inventory, policy, scan, state, transport, ui
+from app.commands import mount
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "bin/macbackup"

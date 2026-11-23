@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.macbackup import i18n
+from app import i18n
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'bin/macbackup'

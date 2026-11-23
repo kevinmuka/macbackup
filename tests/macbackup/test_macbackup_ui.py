@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from lib.macbackup import ui as terminal_ui
+from app import ui as terminal_ui
 
 
 class UiTests(unittest.TestCase):

@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.macbackup import policy, scan
+from app import policy, scan
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "bin/macbackup"

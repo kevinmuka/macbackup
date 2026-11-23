@@ -10,8 +10,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from lib.macbackup import icons, policy
-from lib.macbackup.commands import backup
+from app import icons, policy
+from app.commands import backup
 
 from . import test_macbackup_transport as transport_tests
 

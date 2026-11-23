@@ -1,4 +1,4 @@
-"""Exercise both the dotfiles launcher and the standalone executable archive."""
+"""Exercise the source launcher and the standalone executable archive."""
 
 import hashlib
 import os
@@ -34,7 +34,7 @@ def archive_environment(environment: dict) -> dict:
 
 class PackageTests(unittest.TestCase):
     def test_only_the_command_is_in_bin(self):
-        self.assertTrue((REPO / 'lib/macbackup/locales/it.py').is_file())
+        self.assertTrue((REPO / 'app/locales/it.py').is_file())
         self.assertEqual({path.name for path in SCRIPT.parent.iterdir()}, {'macbackup'})
         self.assertTrue(os.access(SCRIPT, os.X_OK))
 
@@ -60,11 +60,11 @@ class PackageTests(unittest.TestCase):
             self.assertTrue(os.access(executable, os.X_OK))
             with ZipFile(executable) as archive:
                 members = {entry.filename for entry in archive.infolist() if not entry.is_dir()}
-                self.assertTrue({'__main__.py', 'lib/__init__.py', 'lib/macbackup/cli.py',
-                                 'lib/macbackup/locales/it.py'}.issubset(members))
+                self.assertTrue({'__main__.py', 'app/__init__.py', 'app/cli.py',
+                                 'app/locales/it.py'}.issubset(members))
                 self.assertTrue(all(
-                    entry in {'__main__.py', 'lib/__init__.py'}
-                    or (entry.startswith('lib/macbackup/') and entry.endswith('.py')
+                    entry == '__main__.py'
+                    or (entry.startswith('app/') and entry.endswith('.py')
                         and '__pycache__' not in entry.split('/'))
                     for entry in members
                 ), members)

@@ -16,8 +16,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from lib.macbackup import cli, inventory, policy, scan, state, transport, ui
-from lib.macbackup.commands import backup, verify
+from app import cli, inventory, policy, scan, state, transport, ui
+from app.commands import backup, verify
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "bin/macbackup"
@@ -572,7 +572,7 @@ class TransportTests(unittest.TestCase):
         helper = '''
 import json, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(sys.argv[1]).resolve().parents[3]))
-from lib.macbackup.transport import rclone_progress_call, TransferInterrupted, transfer_metrics
+from app.transport import rclone_progress_call, TransferInterrupted, transfer_metrics
 try:
     rclone_progress_call([
         'sync', sys.argv[2], sys.argv[3], '--stats', '1s',

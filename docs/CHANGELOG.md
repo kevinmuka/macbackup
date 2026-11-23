@@ -8,7 +8,9 @@ When a rule changes, update the manual first if the user contract changes. Then 
 
 ## Repository split (unreleased)
 
-The standalone checkout holds the launcher in `bin/`, the two Zsh completion definitions in `completions/zsh/`, and the release builders in `scripts/`. The Homebrew formula now targets this repository's releases. The original dotfiles repository retains the earlier commit history and can pin this checkout as a submodule.
+The standalone checkout holds the Python package in `app/`, the launcher in `bin/`, both Zsh completion definitions in `completions/zsh/`, and the release builders in `scripts/`. The launcher and zipapp import the same package. The checkout directory can have any name. The Homebrew formula now targets this repository's releases. The original dotfiles repository retains the earlier commit history and can pin this checkout as a submodule.
+
+All 229 macbackup tests passed after the move to `app/`. The release build produced the executable zipapp and a matching Homebrew formula and checksum file. The built command ran, the formula passed Ruby syntax validation, and both artifact checksums matched.
 
 ## 2026-11-16 — Internal Python modules (0.16.0)
 

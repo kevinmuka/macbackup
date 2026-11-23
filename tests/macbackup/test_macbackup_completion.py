@@ -18,7 +18,7 @@ import termios
 import time
 import unittest
 
-from lib.macbackup import cli
+from app import cli
 
 
 REPO = Path(__file__).resolve().parents[2]

@@ -10,7 +10,7 @@ This is the **primary, current manual**. It uses examples rather than one comput
 
 macbackup runs on macOS. For a manual installation, you need Python 3.11 or later available as `python3` and rclone in `PATH`. The Python code has no external package dependencies. `use_gitignore = true` also requires Git.
 
-From a source checkout, run `./bin/macbackup`. To use `macbackup` by name, add the checkout’s `bin/` directory to `PATH` or symlink the launcher into a directory already on `PATH`. The launcher resolves symlinks and loads `lib/macbackup/` from the checkout.
+From a source checkout, run `./bin/macbackup`. To use `macbackup` by name, add the checkout’s `bin/` directory to `PATH` or symlink the launcher into a directory already on `PATH`. The launcher resolves symlinks and loads `app/` from the checkout.
 
 ### Install a single executable file
 
@@ -55,14 +55,14 @@ export MACBACKUP_LANG=it                    # subsequent commands too
 source ~/.zsh/integrations/macbackup.zsh    # reload completion in this shell
 ```
 
-Use `unset MACBACKUP_LANG` and reload the integration to return to English; `MACBACKUP_LANG=en` explicitly selects English. English is the source language throughout the internal modules, including help, errors, progress labels, and generated `init` comments. Established Italian wording is kept in the optional catalog `lib/macbackup/locales/it.py`, loaded only for `MACBACKUP_LANG=it`. This setting does not change commands, flags, JSON field names, paths, or backup rules. Explanatory strings in new reports use the active language. `status` displays previously saved reports in their original language without rewriting them. Completion chooses its language when the Zsh integration is loaded, so changing the variable in an open shell requires sourcing it again.
+Use `unset MACBACKUP_LANG` and reload the integration to return to English; `MACBACKUP_LANG=en` explicitly selects English. English is the source language throughout the internal modules, including help, errors, progress labels, and generated `init` comments. Established Italian wording is kept in the optional catalog `app/locales/it.py`, loaded only for `MACBACKUP_LANG=it`. This setting does not change commands, flags, JSON field names, paths, or backup rules. Explanatory strings in new reports use the active language. `status` displays previously saved reports in their original language without rewriting them. Completion chooses its language when the Zsh integration is loaded, so changing the variable in an open shell requires sourcing it again.
 
 ## 2. Location on the Mac and relationship with Git
 
 | Item | Typical location |
 |---|---|
 | Versioned script | `<macbackup-repo>/bin/macbackup` |
-| Internal Python package and locale catalog | `<macbackup-repo>/lib/macbackup/` |
+| Internal Python package and locale catalog | `<macbackup-repo>/app/` |
 | Command after a manual installation | `~/.local/bin/macbackup` |
 | Lists and settings | `~/.config/macbackup/` |
 | State and `forget` plans | `~/.local/state/macbackup/` |

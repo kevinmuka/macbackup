@@ -17,7 +17,7 @@ import sys
 if sys.version_info < (3, 11):
     raise SystemExit("macbackup requires Python 3.11 or later.")
 
-from lib.macbackup.cli import main
+from app.cli import main
 
 raise SystemExit(main())
 """
@@ -27,14 +27,11 @@ def build(output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.macbackup-build-', dir=output.parent) as work:
         source = Path(work) / 'source'
-        library = source / 'lib'
-        library.mkdir(parents=True)
-        shutil.copyfile(REPO / 'lib/__init__.py', library / '__init__.py')
-        package = REPO / 'lib/macbackup'
+        package = REPO / 'app'
         for module in sorted(package.rglob('*.py')):
             if not module.is_file() or module.is_symlink() or '__pycache__' in module.parts:
                 continue
-            destination = library / 'macbackup' / module.relative_to(package)
+            destination = source / 'app' / module.relative_to(package)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(module, destination)
         (source / '__main__.py').write_text(ENTRY_POINT, encoding='utf-8')

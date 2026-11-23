@@ -7,7 +7,7 @@ import sys
 # Resolve the installed symlink before locating the repository.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lib.macbackup.cli import main
+from app.cli import main
 
 
 if __name__ == "__main__":

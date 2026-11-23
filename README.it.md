@@ -12,7 +12,7 @@ Questo manuale descrive il comportamento del programma e usa **esempi**, non la 
 
 macbackup funziona su macOS. Per l'installazione manuale servono Python 3.11 o successivo disponibile come `python3` e rclone nel `PATH`. Il codice Python non richiede pacchetti esterni. Per usare `use_gitignore = true` serve anche Git.
 
-Da una copia del repository, esegui `./bin/macbackup`. Per usare il solo nome `macbackup`, aggiungi la directory `bin/` del repository al `PATH` oppure crea un symlink al launcher in una directory già nel `PATH`. Il launcher risolve i collegamenti e carica il pacchetto da `lib/macbackup/`.
+Da una copia del repository, esegui `./bin/macbackup`. Per usare il solo nome `macbackup`, aggiungi la directory `bin/` del repository al `PATH` oppure crea un symlink al launcher in una directory già nel `PATH`. Il launcher risolve i collegamenti e carica il pacchetto da `app/`.
 
 ### Installazione da un unico file eseguibile
 
@@ -57,14 +57,14 @@ export MACBACKUP_LANG=it                    # anche i comandi successivi
 source ~/.zsh/integrations/macbackup.zsh    # aggiorna l'autocompletamento nella shell aperta
 ```
 
-Per tornare all'inglese, eseguire `unset MACBACKUP_LANG` e ricaricare l'integrazione Zsh con lo stesso comando `source`. `MACBACKUP_LANG=en` seleziona esplicitamente l'inglese. I moduli interni usano l'inglese come lingua sorgente, anche per aiuto, errori, avanzamento e commenti creati da `init`. Le formulazioni italiane già presenti sono conservate nel catalogo opzionale `lib/macbackup/locales/it.py`, caricato solo con `MACBACKUP_LANG=it`. La scelta non cambia i comandi, le flag, i nomi dei campi JSON, i percorsi o le regole di backup. Le stringhe esplicative dei nuovi resoconti seguono la lingua attiva; `status` mostra i resoconti già salvati nella lingua originale, senza modificarli. La lingua dell'autocompletamento viene scelta quando si carica l'integrazione Zsh, quindi cambiare la variabile in una shell già aperta richiede il nuovo `source`.
+Per tornare all'inglese, eseguire `unset MACBACKUP_LANG` e ricaricare l'integrazione Zsh con lo stesso comando `source`. `MACBACKUP_LANG=en` seleziona esplicitamente l'inglese. I moduli interni usano l'inglese come lingua sorgente, anche per aiuto, errori, avanzamento e commenti creati da `init`. Le formulazioni italiane già presenti sono conservate nel catalogo opzionale `app/locales/it.py`, caricato solo con `MACBACKUP_LANG=it`. La scelta non cambia i comandi, le flag, i nomi dei campi JSON, i percorsi o le regole di backup. Le stringhe esplicative dei nuovi resoconti seguono la lingua attiva; `status` mostra i resoconti già salvati nella lingua originale, senza modificarli. La lingua dell'autocompletamento viene scelta quando si carica l'integrazione Zsh, quindi cambiare la variabile in una shell già aperta richiede il nuovo `source`.
 
 ## 2. Posizione sul Mac e rapporto con Git
 
 | Elemento | Percorso tipico |
 |---|---|
 | Script versionato | `<macbackup-repo>/bin/macbackup` |
-| Pacchetto Python interno e catalogo delle lingue | `<macbackup-repo>/lib/macbackup/` |
+| Pacchetto Python interno e catalogo delle lingue | `<macbackup-repo>/app/` |
 | Comando dopo un’installazione manuale | `~/.local/bin/macbackup` |
 | Elenchi e impostazioni | `~/.config/macbackup/` |
 | Stato e piani `forget` | `~/.local/state/macbackup/` |
